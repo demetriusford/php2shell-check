@@ -9,7 +9,7 @@
 #   ruby php2shell_check.rb                 # check every PHP binary on PATH
 #   ruby php2shell_check.rb /usr/bin/php8.3 # check one specific binary
 #
-# Exit codes:
+# Exit codes (handy for CI):
 #   0  everything found is patched
 #   1  at least one install is vulnerable
 #   2  manual review needed, or no PHP found
@@ -21,7 +21,7 @@ require "shellwords"
 module Php2shell
   # Advisory facts: the CVE IDs, the first fixed release per branch, and the match pattern.
   module Advisory
-    CVES = %w[CVE-2026-109618 CVE-2026-109619].freeze
+    CVES = ["CVE-2026-109618", "CVE-2026-109619"].freeze
     FIXED = {
       "8.2" => "8.2.35",
       "8.3" => "8.3.36",
@@ -31,30 +31,34 @@ module Php2shell
     HIGHEST_BRANCH = "8.5"
     PATTERN = /CVE-2026-10961[89]/
 
-    def self.fixed_for(branch)
-      FIXED[branch]
-    end
+    class << self
+      def fixed_for(branch)
+        FIXED[branch]
+      end
 
-    def self.supported_branch?(branch)
-      FIXED.key?(branch)
-    end
+      def supported_branch?(branch)
+        FIXED.key?(branch)
+      end
 
-    # Changelogs can carry non-UTF-8 bytes, so scrub before matching.
-    def self.mentions_cve?(text)
-      return false if text.nil?
+      # Changelogs can carry non-UTF-8 bytes, so scrub before matching.
+      def mentions_cve?(text)
+        return false if text.nil?
 
-      text.dup.force_encoding("UTF-8").scrub("").match?(PATTERN)
+        text.dup.force_encoding("UTF-8").scrub("").match?(PATTERN)
+      end
     end
   end
 
   # Looks up executables on PATH.
   module Command
-    def self.available?(name)
-      dirs.any? { |dir| File.executable?(File.join(dir, name)) }
-    end
+    class << self
+      def available?(name)
+        dirs.any? { |dir| File.executable?(File.join(dir, name)) }
+      end
 
-    def self.dirs
-      ENV.fetch("PATH", "").split(File::PATH_SEPARATOR)
+      def dirs
+        ENV.fetch("PATH", "").split(File::PATH_SEPARATOR)
+      end
     end
   end
 
@@ -62,8 +66,10 @@ module Php2shell
   module Ansi
     CODES = { green: "32", red: "31", yellow: "33", blue: "34" }.freeze
 
-    def self.paint(io, text, color)
-      io.tty? ? "\e[#{CODES.fetch(color)}m#{text}\e[0m" : text
+    class << self
+      def paint(io, text, color)
+        io.tty? ? "\e[#{CODES.fetch(color)}m#{text}\e[0m" : text
+      end
     end
   end
 
@@ -87,7 +93,7 @@ module Php2shell
 
   # Finds candidate PHP executables on PATH.
   class BinaryFinder
-    BASE_NAMES = %w[php php-fpm php-cgi].freeze
+    BASE_NAMES = ["php", "php-fpm", "php-cgi"].freeze
     BRANCHES = (2..9).map { |minor| "8.#{minor}" }.freeze
 
     def paths
@@ -129,7 +135,7 @@ module Php2shell
     private
 
     def capture
-      output = `#{Shellwords.escape(@path)} -v 2>&1`
+      output = %x(#{Shellwords.escape(@path)} -v 2>&1)
       $CHILD_STATUS.success? ? output : nil
     rescue StandardError
       nil
@@ -177,13 +183,13 @@ module Php2shell
     def debian_packages
       return [] unless Command.available?("dpkg-query")
 
-      lines(`dpkg-query -W -f='${Package}\n' 'php*' 2>/dev/null`)
+      lines(%x(dpkg-query -W -f='${Package}\n' 'php*' 2>/dev/null))
     end
 
     def rpm_packages
       return [] unless Command.available?("rpm")
 
-      lines(`rpm -qa 'php*' 2>/dev/null`)
+      lines(%x(rpm -qa 'php*' 2>/dev/null))
     end
 
     def changelogs_for(package)
@@ -191,7 +197,7 @@ module Php2shell
     end
 
     def rpm_changelog(packages)
-      `rpm -q --changelog #{packages.shelljoin} 2>/dev/null`
+      %x(rpm -q --changelog #{packages.shelljoin} 2>/dev/null)
     end
 
     def read(path)
@@ -241,23 +247,23 @@ module Php2shell
         vulnerable("#{version} is below the upstream fix #{fixed} and no package changelog names the CVE")
       else
         review("#{version} is below the upstream fix #{fixed}; this is not a distro-managed package, " \
-               "so a Homebrew/source/manual build at this version is vulnerable. Verify how PHP was installed")
+          "so a Homebrew/source/manual build at this version is vulnerable. Verify how PHP was installed")
       end
     end
 
     def eol_branch_verdict
       if @audit.state == :fixed
         patched("branch #{branch} is end-of-life upstream, but the OS package changelog names the CVE " \
-                "(backported fix). Plan a move to a supported branch anyway")
+          "(backported fix). Plan a move to a supported branch anyway")
       else
         vulnerable("branch #{branch} is end-of-life and unpatched upstream. Upgrade to a supported, " \
-                   "patched branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12)")
+          "patched branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12)")
       end
     end
 
     def newer_than_data
       review("#{version} is on branch #{branch}, newer than this checker knows about " \
-             "(last known branch #{Advisory::HIGHEST_BRANCH}); confirm the advisory for that branch")
+        "(last known branch #{Advisory::HIGHEST_BRANCH}); confirm the advisory for that branch")
     end
 
     def branch
@@ -359,7 +365,7 @@ module Php2shell
   # Wires the pieces together and returns a process exit code.
   class CLI
     EXIT_CODES = { patched: 0, vulnerable: 1, review: 2 }.freeze
-    SEVERITY = %i[patched review vulnerable].freeze
+    SEVERITY = [:patched, :review, :vulnerable].freeze
 
     def initialize(argv, reporter: Reporter.new)
       @argv = argv
